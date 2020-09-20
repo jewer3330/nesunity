@@ -75,8 +75,10 @@ https://github.com/Xyene/Emulator.NES
             }
         }
 ```
-根据注释加载ROM，ROM的解析都在代码里了，其实还是比较简单的，没有什么难度
+## 总结  
+根据注释加载ROM，ROM的解析都在代码里了，其实还是比较简单的，没有什么难度  
 
+---
 ## 第二章 CPU基础读写
 本文参考  
 https://zhuanlan.zhihu.com/p/44042256  
@@ -180,6 +182,10 @@ http://wiki.nesdev.com/w/index.php/NROM
         }
     }
 ```
+## 总结 
+介绍了CPU的一些内存布局，如何从卡带加载ROM  
+
+---
 # 第三章 6502汇编
 参考文章  
 http://wiki.nesdev.com/w/index.php/CPU_unofficial_opcodes#Games_using_unofficial_opcodes  
@@ -662,7 +668,410 @@ https://zhuanlan.zhihu.com/p/44051504
             PC = ReadWord(_interruptHandlerOffsets[(int) InterruptType.RESET]);
         }
 ```  
-
+## 总结  
 这篇虽然我也是理解了，但是和后面的一些关系还需要慢慢体会~  
 读不懂的朋友也不用捉急，因为我现在也是飘飘然的状态~，  
-关键的关键就是理解流程：ROM加载后，就去加载Reset地址，并读取操作码，以及操作码后面是干什么暂时不需要知道~
+关键的关键就是理解流程：ROM加载后，就去加载Reset地址，并读取操作码，以及操作码后面是干什么暂时不需要知道~  
+
+---
+
+# 6502 CPU寄存器说明和寻址模式
+本文参考  
+https://zhuanlan.zhihu.com/p/44088842  
+* CPU寄存器说明
+``` csharp
+
+    public sealed partial class CPU
+    {
+        private const int CarryBit = 0x1;
+        private const int ZeroBit = 0x2;
+        private const int InterruptDisabledBit = 0x4;
+        private const int DecimalModeBit = 0x8;
+        private const int BreakSourceBit = 0x10;
+        private const int OverflowBit = 0x40;
+        private const int NegativeBit = 0x80;
+        //这里摘自某大大的文章 可以参考
+        // 状态寄存器标记
+        // enum sfc_status_flag {
+        //     SFC_FLAG_C = 1 << 0,    // 进位标记(Carry flag)
+        //     SFC_FLAG_Z = 1 << 1,    // 零标记 (Zero flag)
+        //     SFC_FLAG_I = 1 << 2,    // 禁止中断(Irq disabled flag)
+        //     SFC_FLAG_D = 1 << 3,    // 十进制模式(Decimal mode flag)
+        //     SFC_FLAG_B = 1 << 4,    // 软件中断(BRK flag)
+        //     SFC_FLAG_R = 1 << 5,    // 保留标记(Reserved) 一直为1
+        //     SFC_FLAG_V = 1 << 6,    // 溢出标记(Overflow  flag)
+        //     SFC_FLAG_S = 1 << 7,    // 符号标记(Sign flag)
+        //     SFC_FLAG_N = SFC_FLAG_S,// 又叫(Negative Flag)
+        // };
+
+        public class CPUFlags
+        {
+            public bool Negative;
+            public bool Overflow;
+            public bool BreakSource;
+            public bool DecimalMode;
+            public bool InterruptsDisabled;
+            public bool Zero;
+            public bool Carry;
+        }
+        /// <summary>
+        /// 状态寄存器了
+        /// </summary>
+        public readonly CPUFlags F = new CPUFlags();
+
+        public uint _A, _X, _Y, _SP;
+
+        /// <summary>
+        /// [16位] 指令计数器(Program Counter)
+        /// </summary>
+        public uint PC;
+        
+        /// <summary>
+        /// [8位]累加寄存器 Accumulator
+        /// </summary>
+        public uint A
+        {
+            get => _A;
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            private set => _A = _F(value & 0xFF);
+        }
+
+        /// <summary>
+        /// [8位]X 变址寄存器(X Index Register)
+        /// </summary>
+        public uint X
+        {
+            get => _X;
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            private set => _X = _F(value & 0xFF);
+        }
+
+        /// <summary>
+        /// [8位] Y 变址寄存器(Y Index Register)
+        /// </summary>
+        public uint Y
+        {
+            get => _Y;
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            private set => _Y = _F(value & 0xFF);
+        }
+
+        /// <summary>
+        /// [8位] 栈指针(Stack Pointer)
+        /// </summary>
+        public uint SP
+        {
+            get => _SP;
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            private set => _SP = value & 0xFF;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private uint _F(uint val)
+        {
+            F.Zero = (val & 0xFF) == 0;
+            F.Negative = (val & 0x80) > 0;
+            return val;
+        }
+
+        /// <summary>
+        /// [8位] 状态寄存器(Status Register)
+        /// </summary>
+        public uint P
+        {
+            get => (uint) ((F.Carry.AsByte() << 0) |
+                           (F.Zero.AsByte() << 1) |
+                           (F.InterruptsDisabled.AsByte() << 2) |
+                           (F.DecimalMode.AsByte() << 3) |
+                           (F.BreakSource.AsByte() << 4) |
+                           (1 << 5) |
+                           (F.Overflow.AsByte() << 6) |
+                           (F.Negative.AsByte() << 7));
+            set
+            {
+                F.Carry = (value & CarryBit) > 0;
+                F.Zero = (value & ZeroBit) > 0;
+                F.InterruptsDisabled = (value & InterruptDisabledBit) > 0;
+                F.DecimalMode = (value & DecimalModeBit) > 0;
+                F.BreakSource = (value & BreakSourceBit) > 0;
+                F.Overflow = (value & OverflowBit) > 0;
+                F.Negative = (value & NegativeBit) > 0;
+            }
+        }
+    }
+
+```
+* 寻址模式
+```
+寻址方式就是处理器根据指令中给出的地址信息来寻找有效地址的方式，是确定本条指令的数据地址以及下一条要执行的指令地址的方法
+```
+``` csharp
+      public sealed partial class CPU
+    {
+        public enum AddressingMode
+        {
+            None,
+            /// <summary>
+            /// 隐含寻址 Implied Addressing 单字节指令, 指令已经隐含了操作地址
+            /// $AA
+            /// TAX - (将累加器中的值传给 X 寄存器, 即 X = A)
+            /// </summary>
+            Direct,
+
+            /// <summary>
+            /// 立即寻址 Immediate Addressing
+            /// 双字节指令, 指令的操作数部分给出的不是 操作数地址而是操作数本身, 我们称为立即数(00-FF之间的任意数)
+            /// 在6502汇编中，这种模式以操作数(即** 立即数**)前加 "#" 来标记.
+            /// $A9 $0A
+            /// LDA #$0A - (将内存值$0A载入累加器, 即 A = 0x0A)
+            /// </summary>
+            Immediate,
+
+            /// <summary>
+            /// 零页寻址 全称绝对零页寻址 Zero-page Absolute Addressing
+            /// 双字节指令, 将地址$00-$FF称之为**零页**, 绝对寻址中如果高字节为0, 即可变为零页寻址, 直接能够节约一个字节, 速度较快, 所以经常使用的数据可以放在零页.      
+            /// $A5 $F4
+            /// LDA $F4 - (将地址为$00F4的值载入累加器, 即 A = *0x00F4)
+            /// </summary>
+            ZeroPage,
+
+            /// <summary>
+            /// 绝对寻址 Absolute Addressing 又称直接寻址
+            /// 三字节指令, 指令的操作数给出的是操作数, 在存储器中的有效地址
+            /// $AD $F6 $31
+            /// LDA $31F6 - (将地址为$31F6的值载入累加器, 即 A = [$31F6])
+            /// </summary>
+            Absolute,
+
+            /// <summary>
+            /// 零页X变址 Zero-page X Indexed Addressing
+            /// 双字节指令, 同AbsoluteX 如果高地址是0, 可以节约一个字节.
+            /// </summary>
+            ZeroPageX,
+
+            /// <summary>
+            /// 零页Y变址 Zero-page Y Indexed Addressing
+            /// 双字节指令, 同ZeroPageX, 就是把X换成Y而已
+            /// </summary>
+            ZeroPageY,
+
+            /// <summary>
+            /// 绝对X变址 Absolute X Indexed Addressing
+            /// 三字节指令, 这种寻址方式是将一个16位的直接地址作为基地址, 然后和变址寄存器X的内容相加, 结果就是真正的有效地址
+            /// $DD $F6 $31
+            /// LDA $31F6, X - (将值$31F6加上X作为地址的值载入累加器, 即 A = 0x31F6[X])
+            /// </summary>
+            AbsoluteX,
+
+            /// <summary>
+            /// 绝对Y变址 Absolute Y Indexed Addressing
+            /// 三字节指令, 同AbsoluteX, 就是把X换成Y而已
+            /// </summary>
+            AbsoluteY,
+
+            /// <summary>
+            /// 详细见JMP 指令的实现
+            /// 间接寻址 Indirect Addressing
+            /// 三字节指令, 在 6502中,仅仅用于无条件跳转指令```JMP```这条指令该寻址方式中, 操作数给出的是间接地址, 间接地址是指存放操作数有效地址的地址
+            /// $6C $5F $21
+            /// JMP ($215F)  - 跳转至$215F地址开始两字节指向的地址
+            /// </summary>
+            Indirect,
+            /// <summary>
+            /// 间接X变址(先变址X后间接寻址): Pre-indexed Indirect Addressing
+            /// 双字节指令, 比较麻烦的寻址方式
+            /// $A1 $3E
+            /// LDA ($3E, X)
+            /// </summary>
+            IndirectX,
+
+            /// <summary>
+            /// 间接Y变址(后变址Y间接寻址): Post-indexed Indirect Addressing
+            /// 双字节指令, 比较麻烦的寻址方式
+            /// $B1 $4C
+            /// LDA ($4C), Y
+            /// </summary>
+            IndirectY,
+
+            /// <summary>
+            /// 详细见BEQ
+            /// 相对寻址: Relative Addressing
+            /// 该寻址仅用于条件转移指令, 指令长度为2个字节.
+            /// 第1字节为操作码, 第2字节为条件转移指令的跳转步长, 又叫偏移量D. 偏移量可正可负, D若为负用补码表示.
+            /// $F0 $A7
+            /// BEQ $A7 - (如果标志位中'Z'-被设置, 则向后跳转-39字节, 即前跳39字节)
+            /// </summary>
+            Relative,
+        }
+
+        private uint? _currentMemoryAddress;
+        private uint _rmwValue;
+
+        private void ResetInstructionAddressingMode() => _currentMemoryAddress = null;
+
+        private uint _Address()
+        {
+            var def = _opcodeDefs[_currentInstruction];
+            switch (def.Mode)
+            {
+                case Immediate:
+                    return PC++;
+                case ZeroPage:
+                    return NextByte();
+                case Absolute:
+                    return NextWord();
+                case ZeroPageX:
+                    return (NextByte() + X) & 0xFF;
+                case ZeroPageY:
+                    return (NextByte() + Y) & 0xFF;
+                case AbsoluteX:
+                    uint addr = NextWord();
+                    if (def.PageBoundary && (addr & 0xFF00) != ((addr + X) & 0xFF00)) Cycle += 1;
+                    return addr + X;
+                case AbsoluteY:
+                    addr = NextWord();
+                    if (def.PageBoundary && (addr & 0xFF00) != ((addr + Y) & 0xFF00)) Cycle += 1;
+                    return addr + Y;
+                case IndirectX:
+                    uint off = (NextByte() + X) & 0xFF;
+                    return ReadByte(off) | (ReadByte((off + 1) & 0xFF) << 8);
+                case IndirectY:
+                    off = NextByte() & 0xFF;
+                    addr = ReadByte(off) | (ReadByte((off + 1) & 0xFF) << 8);
+                    if (def.PageBoundary && (addr & 0xFF00) != ((addr + Y) & 0xFF00)) Cycle += 1;
+                    return (addr + Y) & 0xFFFF;
+            }
+            throw new NotImplementedException();
+        }
+
+        public uint AddressRead()
+        {
+            if (_opcodeDefs[_currentInstruction].Mode == Direct) return _rmwValue = A;
+            if (_currentMemoryAddress == null) _currentMemoryAddress = _Address();
+            return _rmwValue = ReadByte((uint)_currentMemoryAddress) & 0xFF;
+        }
+
+        public void AddressWrite(uint val)
+        {
+            if (_opcodeDefs[_currentInstruction].Mode == Direct) A = val;
+            else
+            {
+                if (_currentMemoryAddress == null) _currentMemoryAddress = _Address();
+                if (_opcodeDefs[_currentInstruction].RMW)
+                    WriteByte((uint)_currentMemoryAddress, _rmwValue);
+                WriteByte((uint)_currentMemoryAddress, val);
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private uint ReadWord(uint addr) => ReadByte(addr) | (ReadByte(addr + 1) << 8);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private uint NextByte() => ReadByte(PC++);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private uint NextWord() => NextByte() | (NextByte() << 8);
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private sbyte NextSByte() => (sbyte)NextByte();
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void Push(uint what)
+        {
+            WriteByte(0x100 + SP, what);
+            SP--;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private uint Pop()
+        {
+            SP++;
+            return ReadByte(0x100 + SP);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void PushWord(uint what)
+        {
+            Push(what >> 8);
+            Push(what & 0xFF);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private uint PopWord() => Pop() | (Pop() << 8);
+
+        protected override void InitializeMemoryMap()
+        {
+            base.InitializeMemoryMap();
+
+            MapReadHandler(0x0000, 0x1FFF, addr => _ram[addr & 0x07FF]);
+            MapReadHandler(0x2000, 0x3FFF, addr => _emulator.PPU.ReadRegister((addr & 0x7) - 0x2000));
+            MapReadHandler(0x4000, 0x4017, ReadIORegister);
+
+            MapWriteHandler(0x0000, 0x1FFF, (addr, val) => _ram[addr & 0x07FF] = val);
+            MapWriteHandler(0x2000, 0x3FFF, (addr, val) => _emulator.PPU.WriteRegister((addr & 0x7) - 0x2000, val));
+            MapWriteHandler(0x4000, 0x401F, WriteIORegister);
+
+            _emulator.Mapper.InitializeMemoryMap(this);
+        }  
+    
+```
+还有一些指令的实现方式在CPU.Instructions.cs中   
+比如博文中所提到的特殊BUG寻址
+这里再放一些代码
+``` csharp
+[OpcodeDef(Opcode = 0x4C, Cycles = 3)]
+        [OpcodeDef(Opcode = 0x6C, Cycles = 5)]
+        private void JMP()
+        {
+            if (_currentInstruction == 0x4C)
+                PC = NextWord();
+            else if (_currentInstruction == 0x6C)
+            {
+                uint off = NextWord();
+                // AN INDIRECT JUMP MUST NEVER USE A VECTOR BEGINNING ON THE LAST BYTE OF A PAGE
+                //
+                // If address $3000 contains $40, $30FF contains $80, and $3100 contains $50, 
+                // the result of JMP ($30FF) will be a transfer of control to $4080 rather than
+                // $5080 as you intended i.e. the 6502 took the low byte of the address from
+                // $30FF and the high byte from $3000.
+                //
+                // http://www.6502.org/tutorials/6502opcodes.html
+
+                //9. 间接寻址 Indirect Addressing
+                //三字节指令, 在 6502中,仅仅用于无条件跳转指令```JMP```这条指令该寻址方式中, 操作数给出的是间接地址, 间接地址是指存放操作数有效地址的地址
+                //$6C $5F $21
+                //JMP($215F) - 跳转至$215F地址开始两字节指向的地址
+                //有点拗口, 假如:
+
+                //地址 | 值
+                //---- -| ---
+                //$215F |$76
+                //$2160 |$30
+                //这个指令将获取 $215F, $2160 两个字节中的值，然后把它当作转到的地址 - 也就是跳转至$3076
+
+                //已知硬件BUG / 缺陷
+                //这唯一一个用在一条指令的寻址方式有一个已知的BUG / 缺陷: JMP($xxFF)无法正常工作.
+                // 例如JMP($10FF), 理论上讲是读取$10FF和$1100这两个字节的数据, 但是实际上是读取的$10FF和$1000这两个字节的数据.虽然很遗憾但是我们必须刻意实现这个BUG, 这其实算是实现FC模拟器中相当有趣的一环.
+                //指令伪C代码
+
+                //// PC指向的两个字节解释为间接地址 非正常的伪代码 即低位位0xFF时的代码
+                // tmp1 = READ(pc++);
+                // tmp1 |= READ(pc++) << 8;
+                // 刻意实现6502的BUG
+                // tmp2 = (tmp1 & 0xFF00) | ((tmp1 + 1) & 0x00FF)
+                //// 读取间接地址
+                //address = READ(tmp1) | (READ(tmp2) << 8);
+                uint hi = (off & 0xFF) == 0xFF ? off - 0xFF : off + 1;
+                uint oldPC = PC;
+                PC = ReadByte(off) | (ReadByte(hi) << 8);
+
+                if ((oldPC & 0xFF00) != (PC & 0xFF00)) Cycle += 2;
+            }
+            else throw new NotImplementedException();
+        }
+```
+## 总结
+第四章基本上就把CPU的核心介绍完了，从ROM加载机器码，并解析，通过各种寻址方式和操作指令opcode，把地址放入对应的寄存器，并计算，对的，感觉就是解析器  
+
+---
+
